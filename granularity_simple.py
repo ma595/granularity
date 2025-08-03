@@ -23,7 +23,7 @@ def find_time_dimension(data):
 def get_data(var, granularity, variable_file_map, cache=None):
     """
     Simple function: get data for a variable at a granularity.
-    Either load directly or resample from ANY available data.
+    Either load directly or resample from FINER data only (no upsampling).
     """
     if cache is None:
         cache = {}
@@ -54,15 +54,15 @@ def get_data(var, granularity, variable_file_map, cache=None):
                     print(f"⚠️  Variable '{var}' not found. Available: {list(ds.data_vars.keys())}")
                     continue
 
-                data = ds[actual_var]
+                data = ds[actual_var].load()  # ← ADD .load() HERE
                 cache[key] = data
                 return data
             else:
                 print(f"⚠️  Direct file missing: {file_path}")
     
     # Direct file doesn't exist or granularity not available
-    # Find ANY available data to resample from
-    print(f"Direct {var}@{granularity} not available, looking for alternatives...")
+    # Find ONLY FINER data to downsample from (no upsampling!)
+    print(f"Direct {var}@{granularity} not available, looking for FINER data to downsample...")
     
     available_grans = []
     for entry in variable_file_map.get(var, []):
@@ -74,14 +74,14 @@ def get_data(var, granularity, variable_file_map, cache=None):
     
     print(f"Available granularities for {var}: {available_grans}")
     
-    # Try to resample from finer granularities first
+    # ONLY try to resample from finer granularities (no upsampling!)
     target_rank = GRANULARITY_ORDER.index(granularity)
     
-    # Look for finer granularities
+    # Look for finer granularities ONLY
     for finer_rank in reversed(range(target_rank)):
         finer_gran = GRANULARITY_ORDER[finer_rank]
         if finer_gran in available_grans:
-            print(f"Resampling {var}: {finer_gran} → {granularity}")
+            print(f"Downsampling {var}: {finer_gran} → {granularity}")
             finer_data = get_data(var, finer_gran, variable_file_map, cache)
             
             # Find the time dimension
@@ -96,22 +96,15 @@ def get_data(var, granularity, variable_file_map, cache=None):
             
             # Use the correct time dimension for resampling
             resample_kwargs = {time_dim: freq_map[granularity]}
-            resampled = finer_data.resample(**resample_kwargs).mean()
+            resampled = finer_data.resample(**resample_kwargs).mean().load()  # ← ADD .load() HERE TOO
             
             cache[key] = resampled
             return resampled
     
-    # If no finer granularities, try coarser ones (less ideal but better than nothing)
-    for coarser_rank in range(target_rank + 1, len(GRANULARITY_ORDER)):
-        coarser_gran = GRANULARITY_ORDER[coarser_rank]
-        if coarser_gran in available_grans:
-            print(f"⚠️  Using coarser data: {var}@{coarser_gran} for {granularity}")
-            coarser_data = get_data(var, coarser_gran, variable_file_map, cache)
-            # Note: This doesn't actually increase temporal resolution, just returns the coarser data
-            cache[key] = coarser_data
-            return coarser_data
-    
-    raise ValueError(f"Cannot get {var} at {granularity} - no alternative sources")
+    # If no finer granularities available, fail
+    print(f"❌ Cannot get {var}@{granularity} - no finer data available for downsampling")
+    print(f"   Available: {available_grans}, Target: {granularity}")
+    raise ValueError(f"Cannot get {var} at {granularity} - no finer data available")
 
 def run_metric(metric_name, metric_function, required_vars, granularity, variable_file_map, cache=None):
     """
@@ -194,6 +187,6 @@ metric_functions = {
 }
 
 # Run everything!
-results = run_all_metrics(metric_requirements, metric_functions, variable_file_map, granularities=["1y"])
+results = run_all_metrics(metric_requirements, metric_functions, variable_file_map, granularities=None)
 
 print(results)

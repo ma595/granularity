@@ -11,12 +11,14 @@ VARIABLE_ALIASES = {
         "un",
         "u",
         "uoce",
+        "uoce_inst",
         "zonal_velocity",
     ],  # Zonal velocity can be 'un', 'u', or 'zonal_velocity'
     "velocity_v": [
         "vn",
         "v",
         "voce",
+        "voce_inst",
         "meridional_velocity",
     ],  # Meridional velocity
     "depth": [

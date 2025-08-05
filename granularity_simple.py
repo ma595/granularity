@@ -1,6 +1,15 @@
 import os
+import dask
+import warnings
 import xarray as xr
 from standardise_variables import VARIABLE_ALIASES, standardize_variables
+
+
+# Configure xarray for climate model data
+xr.set_options(enable_cftimeindex=True)
+warnings.filterwarnings("ignore", message="Unable to decode time axis into full numpy.datetime64")
+
+
 
 GRANULARITY_ORDER = ["10d", "1m", "3m", "1y"]
 
@@ -81,6 +90,7 @@ def get_data_optimised(var, granularity, variable_file_map, cache=None, allow_re
     
     key = (var, granularity)
     if key in cache:
+        print("CACHE HIT", key)
         return cache[key]
     
     # Single-pass file validation
@@ -97,7 +107,9 @@ def get_data_optimised(var, granularity, variable_file_map, cache=None, allow_re
             print(f"Loading {var}@{granularity} directly from {file_path}")
             
             # Open with chunking for better performance
-            ds = xr.open_dataset(file_path, chunks={'time': 100, 'depth': 20})
+            # ds = xr.open_dataset(file_path, chunks={'time': 100, 'depth': 20})
+            ds = xr.open_dataset(file_path)
+            # breakpoint()
             
             # Optimized variable lookup
             actual_var = var if var in ds else next(
@@ -143,7 +155,7 @@ def get_data_optimised(var, granularity, variable_file_map, cache=None, allow_re
         print(f"  Using time dimension: '{time_dim}'")
         
         # Resample (keep lazy!)
-        freq_map = {"10d": "10D", "1m": "1M", "3m": "3M", "1y": "1Y"}
+        freq_map = {"10d": "10D", "1m": "1M", "3m": "3M", "1y": "1YE"}
         resampled = finer_data.resample(**{time_dim: freq_map[granularity]}).mean()
         
         # Don't force loading here - let the metric function decide when to load
@@ -201,6 +213,38 @@ def run_all_metrics(metric_requirements, metric_functions, variable_file_map, gr
     
     return results
 
+# Add this function to parallelize result computation
+def compute_results_parallel(results, n_workers=1):
+    """
+    Compute all dask results in parallel
+    """
+    print(f"Computing {len(results)} results in parallel with {n_workers} workers...")
+    
+    # Extract all dask objects that need computing
+    compute_tasks = []
+    result_keys = []
+    
+    for key, info in results.items():
+        result = info['result']
+        if hasattr(result, 'compute'):
+            compute_tasks.append(result)
+            result_keys.append(key)
+    
+    if compute_tasks:
+        # Compute all tasks in parallel
+        # with dask.config.set(scheduler='threads', num_workers=n_workers):
+        #     computed_results = dask.compute(*compute_tasks)
+        
+        # Update results with computed values
+        for i, key in enumerate(result_keys):
+            print("TO compute key ", key)
+            if key[1] != "ACC_Drake_metric_2":
+                continue
+            breakpoint()   
+            results[key]['result'] = compute_tasks[i].compute()
+            print(f"✓ Computed {key}")
+    
+    return results
 
 import yaml
 
@@ -235,14 +279,20 @@ metric_functions = {
 }
 
 # Run everything!
-results = run_all_metrics(metric_requirements, metric_functions, variable_file_map, granularities=None, down_sample=True)
+results = run_all_metrics(metric_requirements, metric_functions, variable_file_map, granularities=['1y'], down_sample=True)
 
 print(results.keys())
 
+# print(results[("10d", "check_density")]['result'].compute())
+
+# results_out = compute_results_parallel(results, n_workers=1)
+
+print(results)
+
 # get maximum granularities
-gran_max = get_maximum_granularity_with_all(variable_file_map, metric_requirements)
-print(gran_max)
+# gran_max = get_maximum_granularity_with_all(variable_file_map, metric_requirements)
+# print(gran_max)
 
-gran_available = get_available_granularities(variable_file_map)
+# gran_available = get_available_granularities(variable_file_map)
 
-print(gran_available)
+# print(gran_available)

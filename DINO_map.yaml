@@ -1,15 +1,15 @@
 variable_file_map:
-  Temperature:
-    - {file: "data/DINO_10d_grid_inst_T_3D.nc", granularity: "10d"}
-    - {file: "data/DINO_3m_grid_T_3D.nc", granularity: "3m"}
-  Salinity:
-    - {file: "data/DINO_10d_grid_inst_T_3D.nc", granularity: "10d"}
-    - {file: "data/DINO_3m_grid_T_3D.nc", granularity: "3m"}
-  Velocity_U:
-    - {file: "data/DINO_10d_grid_inst_U_3D.nc", granularity: "10d"}
-    - {file: "data/DINO_3m_grid_U_3D.nc", granularity: "3m"}
-  Velocity_V:
-    - {file: "data/DINO_10d_grid_inst_V_3D.nc", granularity: "10d"}
-    - {file: "data/DINO_3m_grid_V_3D.nc", granularity: "3m"}
-  SSH:
-    - {file: "data/DINO_1m_grid_T_2D.nc", granularity: "1m"}
+  temperature:
+    - {file: "restart3/DINO_10d_grid_inst_T_3D.nc", granularity: "10d"}
+    - {file: "restart3/DINO_3m_grid_T_3D.nc", granularity: "3m"}
+  salinity:
+    - {file: "restart3/DINO_10d_grid_inst_T_3D.nc", granularity: "10d"}
+    - {file: "restart3/DINO_3m_grid_T_3D.nc", granularity: "3m"}
+  velocity_u:
+    - {file: "restart3/DINO_10d_grid_inst_U_3D.nc", granularity: "10d"}
+    - {file: "restart3/DINO_3m_grid_U_3D.nc", granularity: "3m"}
+  velocity_v:
+    - {file: "restart3/DINO_10d_grid_inst_V_3D.nc", granularity: "10d"}
+    - {file: "restart3/DINO_3m_grid_V_3D.nc", granularity: "3m"}
+  ssh:
+    - {file: "restart3/DINO_1m_grid_T_2D.nc", granularity: "1m"}

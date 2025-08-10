@@ -24,9 +24,10 @@ granularity/
 ├── granularity_simple_utils.py        # Core utilities (data loading, caching, metrics)
 ├── granularity_simple_analysis.py     # Analysis functions (refactored from utils)
 ├── metrics.py                          # Climate metric definitions
-├── standardise_variables.py           # Variable name standardization
 ├── precomputed_data/                   # Pre-processed NetCDF files
 ├── resampled_cache/                    # Cached resampled data
+├── src/
+│   └── standardise_variables.py       # Variable name standardization
 └── tests/                              # Test files
 ```
 
@@ -123,8 +124,10 @@ analysis = show_availability_summary(variable_file_map, metric_requirements)
 
 ### Analysis Functions
 - `analyze_variable_availability()`: Core availability analysis
-- `get_maximum_granularity_with_all()`: Find best granularity for most metrics
+- `get_maximum_granularity_with_all()`: Find best granularity for most metrics  
 - `get_optimal_granularities_for_metrics()`: Find finest granularity per metric
+
+**Note:** Analysis functions are located in `granularity_simple_analysis.py` but imported through `granularity_simple_utils.py` for convenience.
 
 ## 💾 Caching System
 
@@ -206,14 +209,22 @@ python test_granularity.py
 3. Ensure required variables are in your `variable_file_map`
 
 ### Variable Standardization
-The system handles different variable naming conventions via `standardise_variables.py`:
+The system handles different variable naming conventions via `src/standardise_variables.py`:
 ```python
+# From src/standardise_variables.py
 VARIABLE_ALIASES = {
-    "temperature": ["temp", "T", "potential_temperature"],
-    "salinity": ["sal", "S", "practical_salinity"],
-    # ... more aliases
+    "temperature": ["toce", "toce_inst", "tn", "temperature"],
+    "velocity_u": ["un", "u", "uoce", "uoce_inst", "zonal_velocity"],
+    "velocity_v": ["vn", "v", "voce", "voce_inst", "meridional_velocity"],
+    "depth": ["depth", "nav_lev", "deptht", "depthu", "depthv"],
+    # ... more aliases for NEMO model variables
 }
 ```
+
+When loading data, the system automatically tries:
+1. The exact variable name requested
+2. Common aliases for that variable type
+3. Reports available variables if none match
 
 ## 📈 Performance Tips
 

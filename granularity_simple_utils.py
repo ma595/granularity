@@ -4,60 +4,11 @@ import pandas as pd
 import xarray as xr
 
 from standardise_variables import VARIABLE_ALIASES, standardize_variables
+from granularity_simple_analysis import (
+    analyze_what_is_possible_efficient,
+)
 
 GRANULARITY_ORDER = ["10d", "1m", "3m", "1y"]
-
-def get_maximum_granularity_with_all(variable_file_map, metric_requirements, GRANULARITY_ORDER):
-    """
-    Find the maximum granularity that is available in the variable_file_map.
-    """
-    all_grans = get_available_granularities(variable_file_map)
-    all_vars = set()
-    for fn, vars_list in metric_requirements.items():
-        # print(vars_list)
-        for var in vars_list:
-            all_vars.add(var)
-    
-    cache = {}
-
-    for gran in all_grans:
-        for var in all_vars:
-            if (var, gran) in cache:
-                continue
-
-            # this finds if var at that granularity exists in variable_file_map
-            entry = variable_file_map.get(var, [])
-            for e in entry:
-                # print(e)
-                if e["granularity"] == gran:
-                    file_path = e['file']
-                    if os.path.exists(file_path):
-                        cache[(var, gran)] = True
-                        break
-
-            # Now resample backwards
-            grans = GRANULARITY_ORDER[:GRANULARITY_ORDER.index(gran)]
-            # print(grans)
-
-            for finer_gran in reversed(grans):
-                if (var, finer_gran) in cache:
-                    # print("Can be resampled")
-                    cache[(var, gran)] = True
-
-    gran_fn_map = {} #  "gran" : [fn names]
-
-    for gran in all_grans:
-        for fn, vars in metric_requirements.items():
-            # print(fn, vars)
-            if gran not in gran_fn_map:
-                gran_fn_map[gran] = []
-
-            if all((v,gran) in cache for v in vars ):
-                gran_fn_map[gran].append(fn)
-
-    counts = [len(gran_fn_map[gran]) for gran in gran_fn_map]
-    max_index = counts.index(max(counts))
-    return all_grans[max_index]
 
 def find_time_dimension(data):
     """
@@ -77,60 +28,115 @@ def find_time_dimension(data):
     
     return None
 
-def get_data_optimised(var, granularity, variable_file_map, cache=None, allow_resampling=True):
+import hashlib
+import json
+
+def get_cache_filename(var, source_gran, target_gran, cache_dir="./resampled_cache"):
+    """Generate consistent cache filename"""
+    cache_key = f"{var}_{source_gran}_to_{target_gran}"
+    return os.path.join(cache_dir, f"{cache_key}.nc")
+
+def get_file_hash(filepath):
+    """Get hash of source file to detect changes"""
+    with open(filepath, 'rb') as f:
+        return hashlib.md5(f.read(1024*1024)).hexdigest()  # Hash first 1MB for speed
+
+def load_resampled_from_cache(var, source_gran, target_gran, source_file, cache_dir="./resampled_cache"):
+    """Load resampled data from cache if available and valid"""
+    cache_file = get_cache_filename(var, source_gran, target_gran, cache_dir)
+    metadata_file = cache_file.replace('.nc', '_metadata.json')
+    
+    if not (os.path.exists(cache_file) and os.path.exists(metadata_file)):
+        return None
+    
+    # Check if source file has changed
+    try:
+        with open(metadata_file, 'r') as f:
+            metadata = json.load(f)
+        
+        current_hash = get_file_hash(source_file)
+        if metadata.get('source_hash') != current_hash:
+            print(f"Source file changed, cache invalid for {var} {source_gran}→{target_gran}")
+            return None
+        
+        print(f"Loading {var} {source_gran}→{target_gran} from cache")
+        return xr.open_dataarray(cache_file, chunks={'time': 100})
+        
+    except Exception as e:
+        print(f"Cache load failed: {e}")
+        return None
+
+def save_resampled_to_cache(data, var, source_gran, target_gran, source_file, cache_dir="./resampled_cache"):
+    """Save resampled data to cache"""
+    os.makedirs(cache_dir, exist_ok=True)
+    
+    cache_file = get_cache_filename(var, source_gran, target_gran, cache_dir)
+    metadata_file = cache_file.replace('.nc', '_metadata.json')
+    
+    try:
+        # Save data
+        print(f"Caching {var} {source_gran}→{target_gran} to {cache_file}")
+        data.to_netcdf(cache_file)
+        
+        # Save metadata
+        metadata = {
+            'variable': var,
+            'source_granularity': source_gran,
+            'target_granularity': target_gran,
+            'source_file': source_file,
+            'source_hash': get_file_hash(source_file),
+            'created': pd.Timestamp.now().isoformat(),
+            'shape': list(data.shape),
+            'chunks': str(data.chunks) if hasattr(data, 'chunks') else None
+        }
+        
+        with open(metadata_file, 'w') as f:
+            json.dump(metadata, f, indent=2)
+            
+        print(f"✓ Cached {var} {source_gran}→{target_gran}")
+        
+    except Exception as e:
+        print(f"Cache save failed: {e}")
+
+def get_data_optimised_with_cache(var, granularity, variable_file_map, cache=None, allow_resampling=True, 
+                                 disk_cache_dir="./resampled_cache", save_to_cache=True):
     """
-    Fully optimized version with consistent lazy loading and chunking
+    Enhanced version with disk caching for resampled data
     """
     if cache is None:
         cache = {}
     
     key = (var, granularity)
     if key in cache:
-        print("CACHE HIT", key)
+        print("MEMORY CACHE HIT", key)
         return cache[key]
     
-    # Single-pass file validation
+    # Check for direct file first (same as before)
     valid_entries = {}
     for entry in variable_file_map.get(var, []):
         gran = entry["granularity"]
         file_path = entry["file"]
         valid_entries[gran] = (file_path, os.path.exists(file_path))
     
-    # Try direct file first
+    # Try direct file
     if granularity in valid_entries:
         file_path, exists = valid_entries[granularity]
         if exists:
             print(f"Loading {var}@{granularity} directly from {file_path}")
-            
-            # Open with chunking for better performance
-            # ds = xr.open_dataset(file_path, chunks={'time': 100, 'depth': 20})
             ds = xr.open_dataset(file_path)
-            # breakpoint()
-            
-            # Optimized variable lookup
             actual_var = var if var in ds else next(
                 (alias for alias in VARIABLE_ALIASES.get(var, []) if alias in ds), None
             )
-            
             if actual_var:
-                data = ds[actual_var]  # Keep lazy!
+                data = ds[actual_var]
                 cache[key] = data
                 return data
-            else:
-                print(f"Variable '{var}' not found. Available: {list(ds.data_vars.keys())}")
     
     if not allow_resampling:
-        raise ValueError(f"Cannot get {var} at {granularity} - no direct file and resampling disabled")
+        raise ValueError(f"Cannot get {var} at {granularity}")
     
     # Find best resampling source
     available_grans = [gran for gran, (_, exists) in valid_entries.items() if exists]
-    
-    if not available_grans:
-        raise ValueError(f"No valid files found for {var}")
-    
-    print(f"Available granularities for {var}: {available_grans}")
-    
-    # Direct lookup for best source
     target_rank = GRANULARITY_ORDER.index(granularity)
     best_source_gran = next(
         (GRANULARITY_ORDER[rank] for rank in reversed(range(target_rank))
@@ -138,36 +144,70 @@ def get_data_optimised(var, granularity, variable_file_map, cache=None, allow_re
     )
     
     if best_source_gran:
-        print(f"Downsampling {var}: {best_source_gran} → {granularity}")
+        source_file = valid_entries[best_source_gran][0]
         
-        # Recursive call (already optimized with cache check)
-        finer_data = get_data_optimised(var, best_source_gran, variable_file_map, cache, allow_resampling)
+        # TRY DISK CACHE FIRST
+        cached_resampled = load_resampled_from_cache(
+            var, best_source_gran, granularity, source_file, disk_cache_dir
+        )
         
-        # Find time dimension
+        if cached_resampled is not None:
+            cache[key] = cached_resampled
+            return cached_resampled
+        
+        # Cache miss - compute and save
+        print(f"Resampling {var}: {best_source_gran} → {granularity}")
+        
+        # Get source data (recursive call)
+        finer_data = get_data_optimised_with_cache(
+            var, best_source_gran, variable_file_map, cache, allow_resampling, disk_cache_dir, save_to_cache
+        )
+        
+        # Resample
         time_dim = find_time_dimension(finer_data)
         if time_dim is None:
             raise ValueError(f"No time dimension found in {var}. Dims: {finer_data.dims}")
         
-        print(f"  Using time dimension: '{time_dim}'")
-        
-        # Resample (keep lazy!)
         freq_map = {"10d": "10D", "1m": "1ME", "3m": "3ME", "1y": "1YE"}
-        resampled = finer_data.resample(**{time_dim: freq_map[granularity]}).mean()
+        resample_kwargs = {time_dim: freq_map[granularity]}
+        resampled = finer_data.resample(**resample_kwargs).mean()
         
-        # Don't force loading here - let the metric function decide when to load
-        cache[key] = resampled
-        return resampled
+        # OPTIONALLY SAVE TO DISK CACHE
+        if save_to_cache:
+            # SAVE TO DISK CACHE (compute and save)
+            save_resampled_to_cache(
+                resampled.compute(), var, best_source_gran, granularity, source_file, disk_cache_dir
+            )
+            
+            # Reload as lazy for memory efficiency
+            cached_data = load_resampled_from_cache(
+                var, best_source_gran, granularity, source_file, disk_cache_dir
+            )
+            
+            cache[key] = cached_data
+            return cached_data
+        else:
+            print(f"  Not saving to cache (save_to_cache=False)")
+            cache[key] = resampled  # Keep as lazy
+            return resampled
     
-    raise ValueError(f"Cannot get {var} at {granularity} - no finer data available")
+    raise ValueError(f"Cannot get {var} at {granularity}")
 
+def get_data_optimised(var, granularity, variable_file_map, cache=None, allow_resampling=True):
+    """
+    Original version without disk caching (for backward compatibility)
+    """
+    return get_data_optimised_with_cache(var, granularity, variable_file_map, cache, allow_resampling, 
+                                        disk_cache_dir="./resampled_cache", save_to_cache=False)
 
-def run_metric(metric_name, metric_function, required_vars, granularity, variable_file_map, cache=None, down_sample=True):
-    """
-    Simple function: run one metric at one granularity.
-    """
+def run_metric_with_cache(metric_name, metric_function, required_vars, granularity, variable_file_map, cache=None, down_sample=True, disk_cache_dir="./resampled_cache", save_to_cache=True):
+    """Enhanced run_metric with disk caching"""
     try:
         print(f"Running {metric_name} at {granularity}")
-        inputs = [get_data_optimised(var, granularity, variable_file_map, cache, down_sample) for var in required_vars]
+        inputs = [
+            get_data_optimised_with_cache(var, granularity, variable_file_map, cache, down_sample, disk_cache_dir, save_to_cache) 
+            for var in required_vars
+        ]
         result = metric_function(*inputs)
         print(f"✓ Success: {metric_name}")
         return result
@@ -175,39 +215,138 @@ def run_metric(metric_name, metric_function, required_vars, granularity, variabl
         print(f"✗ Failed: {metric_name} - {e}")
         return None
 
-def run_all_metrics(metric_requirements, metric_functions, variable_file_map, granularities=None, down_sample=True):
+def run_all_metrics_with_cache(metric_requirements, metric_functions, variable_file_map, 
+                               granularities=None, down_sampling=True, 
+                               disk_cache_dir="./resampled_cache", save_to_cache=True):
     """
-    Simple function: try to run all metrics at all available granularities.
+    Enhanced run_all_metrics with disk caching for resampled data
     """
     if granularities is None:
         granularities = GRANULARITY_ORDER
     
-    cache = {}
+    cache = {}  # Memory cache
     results = {}
+    
+    print(f"=== RUNNING ALL METRICS WITH DISK CACHING ===")
+    print(f"Cache directory: {disk_cache_dir}")
+    print(f"Save to cache: {save_to_cache}")
+    print(f"Target granularities: {granularities}")
     
     for gran in granularities:
         print(f"\n=== GRANULARITY: {gran} ===")
         
         for metric_name, required_vars in metric_requirements.items():
-            # if metric_name not in results:  # Only if not already computed
             if metric_name in metric_functions:
-                result = run_metric(
+                result = run_metric_with_cache(
                     metric_name, 
                     metric_functions[metric_name], 
                     required_vars, 
                     gran, 
                     variable_file_map, 
                     cache,
-                    down_sample
+                    down_sampling,
+                    disk_cache_dir,
+                    save_to_cache
                 )
                 if result is not None:
-                    results[(gran, metric_name)] = {'result': result, 'granularity': gran}
+                    results[(gran, metric_name)] = {
+                        'result': result, 
+                        'granularity': gran,
+                        'variables_used': required_vars
+                    }
     
     print(f"\n=== FINAL RESULTS ===")
-    for metric_name, info in results.items():
-        print(f"✓ {metric_name} computed at {info['granularity']}")
+    for metric_key, info in results.items():
+        print(f"✓ {metric_key} computed at {info['granularity']}")
+    
+    # Show cache statistics
+    if save_to_cache:
+        show_cache_stats(disk_cache_dir)
     
     return results
+
+def show_cache_stats(cache_dir="./resampled_cache"):
+    """Show cache statistics"""
+    if not os.path.exists(cache_dir):
+        print("No disk cache found")
+        return
+    
+    nc_files = [f for f in os.listdir(cache_dir) if f.endswith('.nc')]
+    if not nc_files:
+        print("Cache directory exists but is empty")
+        return
+    
+    total_size = 0
+    cached_items = []
+    
+    for nc_file in nc_files:
+        file_path = os.path.join(cache_dir, nc_file)
+        size = os.path.getsize(file_path)
+        total_size += size
+        
+        # Parse filename: "temperature_10d_to_1m.nc"
+        name_parts = nc_file[:-3].split('_to_')
+        if len(name_parts) == 2:
+            source_parts = name_parts[0].split('_')
+            if len(source_parts) >= 2:
+                var = '_'.join(source_parts[:-1])
+                source_gran = source_parts[-1]
+                target_gran = name_parts[1]
+                cached_items.append((var, source_gran, target_gran, size))
+    
+    print(f"\n=== DISK CACHE STATISTICS ===")
+    print(f"Cache directory: {cache_dir}")
+    print(f"Total files: {len(nc_files)}")
+    print(f"Total size: {total_size / 1024**3:.2f} GB")
+    
+    if cached_items:
+        print("\nCached resampled data:")
+        for var, source_gran, target_gran, size in sorted(cached_items):
+            print(f"  {var}: {source_gran}→{target_gran} ({size / 1024**2:.1f} MB)")
+    else:
+        print("No valid cached items found")
+
+def run_metrics_intelligently_with_cache(metric_requirements, metric_functions, variable_file_map, 
+                                        disk_cache_dir="./resampled_cache", save_to_cache=True):
+    """Your intelligent function with disk caching"""
+    print("=== INTELLIGENT METRIC COMPUTATION WITH DISK CACHING ===")
+    print(f"Save to cache: {save_to_cache}")
+    
+    analysis = analyze_what_is_possible_efficient(variable_file_map, metric_requirements)
+    
+    cache = {}
+    results = {}
+    
+    for gran, runnable_metrics_list in analysis['runnable_metrics'].items():
+        if not runnable_metrics_list:
+            continue
+            
+        print(f"\n=== GRANULARITY: {gran} ===")
+        
+        for metric_name in runnable_metrics_list:
+            if metric_name in metric_functions:
+                required_vars = metric_requirements[metric_name]
+                
+                result = run_metric_with_cache(
+                    metric_name, 
+                    metric_functions[metric_name], 
+                    required_vars, 
+                    gran, 
+                    variable_file_map, 
+                    cache,
+                    down_sample=True,
+                    disk_cache_dir=disk_cache_dir,
+                    save_to_cache=save_to_cache
+                )
+                
+                if result is not None:
+                    results[(gran, metric_name)] = {
+                        'result': result, 
+                        'granularity': gran,
+                        'variables_used': required_vars
+                    }
+    
+    return results, analysis
 
 # Add this function to parallelize result computation
 def compute_results_parallel(results, n_workers=1):
@@ -243,121 +382,6 @@ def compute_results_parallel(results, n_workers=1):
     return results
 
 
-def get_available_granularities(variable_file_map):
-    all_grans = set()
-    for entries in variable_file_map.values():
-        for entry in entries:
-            all_grans.add(entry["granularity"])
-    return sorted(all_grans, key=GRANULARITY_ORDER.index)
-
-def analyze_what_is_possible_efficient(variable_file_map, metric_requirements):
-    """
-    Efficient analysis without loading data - just check files and resampling logic
-    """
-    available_grans = get_available_granularities(variable_file_map)
-    
-    # Get all variables needed
-    all_vars = set()
-    for vars_list in metric_requirements.values():
-        all_vars.update(vars_list)
-    
-    variable_availability = {}
-    
-    for var in all_vars:
-        variable_availability[var] = []
-        
-        # Check direct file availability (no data loading)
-        direct_available = []
-        for entry in variable_file_map.get(var, []):
-            if os.path.exists(entry["file"]):
-                direct_available.append(entry["granularity"])
-        
-        print(f"{var}: direct files at {direct_available}")
-        
-        # For each target granularity, check if achievable
-        for target_gran in available_grans:
-            # Direct file available?
-            if target_gran in direct_available:
-                variable_availability[var].append(target_gran)
-                print(f"{var}: achievable at {target_gran} (direct)")
-                continue
-            
-            # Can we resample from a finer granularity?
-            target_rank = GRANULARITY_ORDER.index(target_gran)
-            can_resample = any(
-                GRANULARITY_ORDER.index(direct_gran) < target_rank 
-                for direct_gran in direct_available
-            )
-            
-            if can_resample:
-                variable_availability[var].append(target_gran)
-                print(f"{var}: achievable at {target_gran} (via resampling)")
-            else:
-                print(f"{var}: NOT achievable at {target_gran}")
-    
-    # Determine runnable metrics per granularity
-    runnable_metrics = {}
-    for gran in available_grans:
-        runnable_metrics[gran] = []
-        
-        for metric_name, required_vars in metric_requirements.items():
-            if all(gran in variable_availability.get(var, []) for var in required_vars):
-                runnable_metrics[gran].append(metric_name)
-    
-    return {
-        'variable_availability': variable_availability,
-        'runnable_metrics': runnable_metrics,
-        'available_granularities': available_grans
-    }
-
-def run_metrics_intelligently_fixed(metric_requirements, metric_functions, variable_file_map):
-    """
-    Fixed intelligent version with efficient analysis
-    """
-    print("=== INTELLIGENT METRIC COMPUTATION ===")
-    
-    # Step 1: Efficient analysis (no data loading)
-    analysis = analyze_what_is_possible_efficient(variable_file_map, metric_requirements)
-    
-    print(f"\n=== ANALYSIS RESULTS ===")
-    for gran, metrics in analysis['runnable_metrics'].items():
-        if metrics:
-            print(f"At {gran}: can run {metrics}")
-    
-    cache = {}
-    results = {}
-    
-    # Step 2: Run metrics only at their optimal granularities
-    for gran, runnable_metrics_list in analysis['runnable_metrics'].items():
-        if not runnable_metrics_list:
-            continue
-            
-        print(f"\n=== GRANULARITY: {gran} ===")
-        print(f"Can run: {runnable_metrics_list}")
-        
-        for metric_name in runnable_metrics_list:
-            if metric_name in metric_functions:
-                required_vars = metric_requirements[metric_name]
-                
-                result = run_metric(
-                    metric_name, 
-                    metric_functions[metric_name], 
-                    required_vars, 
-                    gran, 
-                    variable_file_map, 
-                    cache,
-                    down_sample=True
-                )
-                
-                if result is not None:
-                    results[(gran, metric_name)] = {
-                        'result': result, 
-                        'granularity': gran,
-                        'variables_used': required_vars
-                    }
-    
-    return results, analysis
-
 def compute_results_parallel_fixed(results, n_workers=1):
     """
     Fixed compute function without dask dependency
@@ -378,3 +402,6 @@ def compute_results_parallel_fixed(results, n_workers=1):
             print(f"✓ {key} already computed")
     
     return results
+
+#1. we can get the maximum granularity and run_all_metrics_with_cache
+#2. run_metrics_intelligently_with_cache

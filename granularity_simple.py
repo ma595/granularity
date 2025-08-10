@@ -3,7 +3,7 @@ import dask
 import warnings
 import xarray as xr
 
-from granularity_simple_utils import run_all_metrics, run_metrics_intelligently_fixed
+from granularity_simple_utils import run_all_metrics_with_cache, run_metrics_intelligently_with_cache
 from metrics import dummy_ACC_Drake_metric_2, dummy_check_density, dummy_temperature_500m_30NS_metric
 
 # Configure xarray for climate model data
@@ -31,9 +31,9 @@ def main():
         "ACC_Drake_metric_2": dummy_ACC_Drake_metric_2,
     }
 
-    results, analysis = run_metrics_intelligently_fixed(metric_requirements, metric_functions, variable_file_map)
+    # results, analysis = run_metrics_intelligently_with_cache(metric_requirements, metric_functions, variable_file_map)
 
-        # Print what was computed
+    results = run_all_metrics_with_cache(metric_requirements=metric_requirements, metric_functions=metric_functions, variable_file_map=variable_file_map, granularities=["1m"])
 
     # Actually compute the lazy results
     print(f"\n=== COMPUTING RESULTS ===")
@@ -51,7 +51,7 @@ def main():
         else:
             print(f"✓ {key} already computed: {result}")
     
-    return results 
+    # return results 
     
 
     # Run everything!

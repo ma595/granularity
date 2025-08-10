@@ -1,0 +1,4 @@
+xarray
+pandas
+dask
+netcdf4

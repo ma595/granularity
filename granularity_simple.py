@@ -3,14 +3,24 @@ import dask
 import warnings
 import xarray as xr
 
-from granularity_simple_utils import run_all_metrics_with_cache, run_metrics_intelligently_with_cache
-from metrics import dummy_ACC_Drake_metric_2, dummy_check_density, dummy_temperature_500m_30NS_metric
+from granularity_simple_utils import (
+    run_all_metrics_with_cache,
+    run_metrics_intelligently_with_cache,
+)
+from metrics import (
+    dummy_ACC_Drake_metric_2,
+    dummy_check_density,
+    dummy_temperature_500m_30NS_metric,
+)
 
 # Configure xarray for climate model data
 xr.set_options(enable_cftimeindex=True)
-warnings.filterwarnings("ignore", message="Unable to decode time axis into full numpy.datetime64")
+warnings.filterwarnings(
+    "ignore", message="Unable to decode time axis into full numpy.datetime64"
+)
 
 import yaml
+
 
 def main():
     # Load your data map
@@ -33,26 +43,30 @@ def main():
 
     # results, analysis = run_metrics_intelligently_with_cache(metric_requirements, metric_functions, variable_file_map)
 
-    results = run_all_metrics_with_cache(metric_requirements=metric_requirements, metric_functions=metric_functions, variable_file_map=variable_file_map, granularities=["1m"])
+    results = run_all_metrics_with_cache(
+        metric_requirements=metric_requirements,
+        metric_functions=metric_functions,
+        variable_file_map=variable_file_map,
+        granularities=["1m"],
+    )
 
     # Actually compute the lazy results
     print(f"\n=== COMPUTING RESULTS ===")
     print(f"Number of results: {len(results)}")
     for key, info in results.items():
-        result = info['result']
-        if hasattr(result, 'compute'):
+        result = info["result"]
+        if hasattr(result, "compute"):
             print(f"Computing {key}...")
             try:
                 computed_result = result.compute()
-                results[key]['result'] = computed_result
+                results[key]["result"] = computed_result
                 print(f"✓ Computed {key}: {computed_result}")
             except Exception as e:
                 print(f"✗ Failed to compute {key}: {e}")
         else:
             print(f"✓ {key} already computed: {result}")
-    
-    # return results 
-    
+
+    # return results
 
     # Run everything!
     # results = run_all_metrics(metric_requirements, metric_functions, variable_file_map, granularities=['1y'], down_sample=True)
@@ -76,4 +90,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

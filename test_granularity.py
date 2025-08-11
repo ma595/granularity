@@ -6,12 +6,13 @@ from granularity import (
     get_minimum_supported_granularity,
     build_resample_cache_for_all_metrics,
     get_runnable_metrics_at_max_frequency,
+    run_metrics_over_granularities,
 )
 
 metric_requirements = {
-    "check_density": ["Temperature", "Salinity"],
-    "temperature_500m_30NS_metric": ["Temperature"],
-    "ACC_Drake_metric_2": ["Velocity_U", "SSH"],
+    "check_density": ["temperature", "salinity"],
+    "temperature_500m_30NS_metric": ["temperature"],
+    "ACC_Drake_metric_2": ["velocity_u", "ssh"],
 }
 # load yaml file with variable file map
 
@@ -33,7 +34,7 @@ assert gran_range == ["10d", "1m", "3m"]
 # gets the highest supported granularity for a given set of inputs
 # this is designed to work when we run items().
 finest = get_highest_supported_granularity(
-    vars_required=["Temperature", "Salinity"], variable_file_map=variable_file_map
+    vars_required=["temperature", "salinity"], variable_file_map=variable_file_map
 )
 
 assert finest == "10d"
@@ -46,6 +47,17 @@ runnable = get_runnable_metrics_at_max_frequency(
 for metric, info in runnable.items():
     print(f"✓ {metric} → granularity: {info['granularity']} | vars: {info['vars']}")
 
+from metrics import (
+    dummy_check_density,
+    dummy_temperature_500m_30NS_metric,
+    dummy_ACC_Drake_metric_2,
+)
+
+metric_functions = {
+    "check_density": dummy_check_density,
+    "temperature_500m_30NS_metric": dummy_temperature_500m_30NS_metric,
+    "ACC_Drake_metric_2": dummy_ACC_Drake_metric_2,
+}
 
 # this checks if for a given metric function it can be computed at the required granularity
 # not really used - can delete
@@ -55,10 +67,20 @@ test_metric_check_density_1m = check_variable_group_available(
     variable_file_map=variable_file_map,
 )
 
-
 # print(resample_cache)
 resample_cache = build_resample_cache_for_all_metrics(
     metric_requirements, variable_file_map
+)
+
+print(resample_cache)
+
+data_cache = {}
+run_metrics_over_granularities(
+    granularity_list=["10d", "1m", "3m"],
+    metric_requirements=metric_requirements,
+    metric_functions=metric_functions,
+    data_cache=data_cache,
+    resample_cache=resample_cache,
 )
 
 # print(resample_cache)

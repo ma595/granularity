@@ -4,11 +4,30 @@ import xarray as xr
 
 GRANULARITY_ORDER = ["10d", "1m", "3m", "1y"]
 
+from standardize_variables import standardise_variable_name
+
 
 def get_var_granularities(var, variable_file_map):
     # breakpoint()
     return {entry["granularity"] for entry in variable_file_map.get(var, [])}
 
+def find_time_dimension(data):
+    """
+    Find the time dimension in the dataset
+    Different climate models use different names for time dimensions
+    """
+    possible_time_dims = ["time", "time_counter", "t", "T", "Time"]
+
+    for dim in data.dims:
+        if dim in possible_time_dims:
+            return dim
+
+    # If no exact match, look for anything with 'time' in the name
+    for dim in data.dims:
+        if "time" in dim.lower():
+            return dim
+
+    return None
 
 def get_highest_supported_granularity(vars_required, variable_file_map):
     var_grans = [get_var_granularities(var, variable_file_map) for var in vars_required]
@@ -41,6 +60,44 @@ def get_runnable_metrics_at_max_frequency(metric_requirements, variable_file_map
 def get_granularity_rank(gran):
     return GRANULARITY_ORDER.index(gran)
 
+def load_variable_with_standardization(file_path, requested_var, chunks=None):
+    """
+    Load a variable from a NetCDF file with name standardization
+    
+    Parameters:
+    -----------
+    file_path : str
+        Path to the NetCDF file
+    requested_var : str
+        The variable name we want to load
+    chunks : dict, optional
+        Chunking specification for dask
+        
+    Returns:
+    --------
+    xarray.DataArray
+        The loaded and standardized variable
+    """
+    if chunks is None:
+        chunks = {"time": 10}
+    
+    print(f"[LOADING] {file_path}")
+    ds = xr.open_dataset(file_path, chunks=chunks)
+    
+    # Find the actual variable name in the dataset
+    actual_var = standardise_variable_name(ds, requested_var)
+    
+    if actual_var is None:
+        available_vars = list(ds.data_vars.keys())
+        raise ValueError(
+            f"Variable '{requested_var}' not found in {file_path}. "
+            f"Available variables: {available_vars}"
+        )
+    
+    print(f"[STANDARDIZED] {requested_var} -> {actual_var}")
+    return ds[actual_var]
+
+# Then in get_resample_plan, use:
 
 def get_resample_plan(
     var, target_gran, variable_file_map, resample_cache, mode="lazy", cache_dir=None
@@ -55,9 +112,12 @@ def get_resample_plan(
     for entry in variable_file_map.get(var, []):
         if entry["granularity"] == target_gran:
             print(f"[FOUND DIRECT] {var}@{target_gran}")
-            resample_cache[key] = lambda: xr.open_dataset(
-                entry["file"], chunks={"time": 10}
-            )[var]
+            
+            # Use standardization instead of direct variable access
+            def load_direct(file_path=entry["file"], requested_var=var):
+                return load_variable_with_standardization(file_path, requested_var)
+            
+            resample_cache[key] = load_direct
             return resample_cache[key]
 
     # 2. Try to build from next-finer granularity
@@ -83,8 +143,26 @@ def get_resample_plan(
         if finer_plan is not None:
             print(f"[RESAMPLE] {var}@{finer_gran} → {target_gran}")
 
-            def lazy_loader(finer_plan=finer_plan, gran=target_gran):
+            def lazy_loader(finer_plan=finer_plan, gran=target_gran, variable=var):
                 print(f"[LAZY EVAL] Resampling {var} to {target_gran}")
+                 
+                 # Get the data first
+                data = finer_plan()
+
+                time_dim = find_time_dimension(data)
+
+                if time_dim is None:
+                    available_dims = list(data.dims)
+                    raise ValueError(
+                        f"No time dimension found for {variable}. "
+                        f"Available dimensions: {available_dims}"
+                    )
+                
+                print(f"[RESAMPLE] Using time dimension: {time_dim}")
+                
+                # Resample using the correct time dimension
+                resample_kwargs = {time_dim: freq_map[gran]}
+                return data.resample(**resample_kwargs).mean()
 
                 return finer_plan().resample(time=freq_map[gran]).mean()
 
@@ -93,9 +171,23 @@ def get_resample_plan(
                 if not os.path.exists(path):
                     print(f"[WRITE] {path}")
                     lazy_loader().to_zarr(path)
-                resample_cache[key] = lambda: xr.open_zarr(path, chunks={"time": 10})[
-                    var
-                ]
+                
+                # For zarr files, use standardization too
+                def load_from_zarr(zarr_path=path, requested_var=var):
+                    print(f"[LOADING ZARR] {zarr_path}")
+                    ds = xr.open_zarr(zarr_path, chunks={"time": 10})
+                    # Zarr files should preserve original variable names
+                    if requested_var in ds:
+                        return ds[requested_var]
+                    else:
+                        # Fallback to standardization if needed
+                        actual_var = standardise_variable_name(ds, requested_var)
+                        if actual_var:
+                            return ds[actual_var]
+                        else:
+                            raise ValueError(f"Variable '{requested_var}' not found in zarr {zarr_path}")
+                
+                resample_cache[key] = load_from_zarr
             else:
                 resample_cache[key] = lazy_loader
 
@@ -105,7 +197,6 @@ def get_resample_plan(
     print(f"[FAILED] No resample plan for {var}@{target_gran}")
     resample_cache[key] = None
     return None
-
 
 # required - returns the resample_cache
 # it loops over all metric_vars i.e. T, S, SSH U, V

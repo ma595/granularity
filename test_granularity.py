@@ -75,7 +75,7 @@ resample_cache = build_resample_cache_for_all_metrics(
 print(resample_cache)
 
 data_cache = {}
-run_metrics_over_granularities(
+computed_metrics = run_metrics_over_granularities(
     granularity_list=["10d", "1m", "3m"],
     metric_requirements=metric_requirements,
     metric_functions=metric_functions,
@@ -83,11 +83,9 @@ run_metrics_over_granularities(
     resample_cache=resample_cache,
 )
 
-# print(resample_cache)
-# lazy_loader = resample_cache[("SSH", "1y")]
-# import inspect
-
-# print(inspect.signature(lazy_loader))
+print("Computed metrics:")
+for (gran, metric_name), result in computed_metrics.items():
+    print(f"  ✓ {metric_name}@{gran} = {result}")
 
 # print(resample_cache[("Temperature", "3m")])
 

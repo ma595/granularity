@@ -275,14 +275,17 @@ def evaluate_resample_plan(var, granularity, data_cache, resample_cache):
     data_cache[key] = result
     return result
 
-
 def run_metrics_over_granularities(
     granularity_list,
     metric_requirements,
     metric_functions,
     data_cache,
-    resample_cache,  # unified view
+    resample_cache,
+    metric_results=None,  # Add new parameter for storing metric results
 ):
+    if metric_results is None:
+        metric_results = {}
+    
     for gran in granularity_list:
         ran_metrics = []
         skipped_metrics = []
@@ -301,13 +304,30 @@ def run_metrics_over_granularities(
                     ]
                     print(f"Running {metric_name} at {gran}...")
                     metric_fn = metric_functions[metric_name]
-                    metric_fn(*inputs)
+                    
+                    # STORE THE RESULT instead of discarding it
+                    result = metric_fn(*inputs)
+                    metric_results[(gran, metric_name)] = result
+                    
+                    # If result is lazy (dask), optionally compute it
+                    if hasattr(result, 'compute'):
+                        print(f"  Computing lazy result for {metric_name}...")
+                        computed_result = result.compute()
+                        metric_results[(gran, metric_name)] = computed_result
+                        print(f"  ✓ {metric_name}@{gran} = {computed_result}")
+                    else:
+                        print(f"  ✓ {metric_name}@{gran} = {result}")
+                    
                     ran_metrics.append(metric_name)
                 except Exception as e:
-                    print(f"Failed: {metric_name} at {gran}: {e}")
+                    print(f"  ✗ Failed: {metric_name} at {gran}: {e}")
+                    metric_results[(gran, metric_name)] = f"ERROR: {e}"
             else:
                 skipped_metrics.append(metric_name)
+                print(f"  - Skipped {metric_name}: missing variables")
 
         print(f"\nSummary for {gran}:")
         print(f"  Ran: {ran_metrics}")
         print(f"  Skipped: {skipped_metrics}\n")
+    
+    return metric_results  # Return the computed metrics

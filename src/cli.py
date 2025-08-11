@@ -24,7 +24,7 @@ import yaml
 
 def main():
     # Load your data map
-    with open("DINO_map.yaml", "r") as file:
+    with open("config/DINO_map.yaml", "r") as file:
         variable_file_map = yaml.safe_load(file)["variable_file_map"]
 
     # Define what you want to compute

@@ -4,7 +4,7 @@ import pandas as pd
 import xarray as xr
 
 from standardise_variables import VARIABLE_ALIASES, standardize_variables
-from granularity_simple_analysis import (
+from gran_analysis import (
     analyze_what_is_possible_efficient,
 )
 
@@ -144,18 +144,40 @@ def get_data_optimised_with_cache(
         if exists:
             print(f"Loading {var}@{granularity} directly from {file_path}")
             ds = xr.open_dataset(file_path)
-            actual_var = (
-                var
-                if var in ds
-                else next(
-                    (alias for alias in VARIABLE_ALIASES.get(var, []) if alias in ds),
-                    None,
-                )
-            )
-            if actual_var:
-                data = ds[actual_var]
+            print(f"Before standardization - dimensions: {list(ds.dims.keys())}")
+            print(f"Before standardization - coordinates: {list(ds.coords.keys())}")
+            ds = standardize_variables(ds, VARIABLE_ALIASES)
+
+            print(f"After standardization - dimensions: {list(ds.dims.keys())}")
+            print(f"After standardization - coordinates: {list(ds.coords.keys())}")
+
+            # check if the extracted variable is standardised correctly:
+            print(f"var: {var}")
+            data_check = ds[var]
+            print(f"DataArray type: {type(data_check)}")
+            print(f"DataArray dimensions: {list(data_check.dims)}")  # No .keys() here
+            print(f"DataArray coordinates: {list(data_check.coords.keys())}")  # .keys() is OK here
+            print(f"DataArray shape: {data_check.shape}")
+
+            # Check specific coordinates
+            if 'depth' in data_check.coords:
+                print(f"✓ Has 'depth' coordinate")
+            else:
+                print(f"✗ Missing 'depth' coordinate")
+                
+            if 'nav_lev' in data_check.dims:
+                print(f"✗ Still has 'nav_lev' dimension")
+            elif 'depth' in data_check.dims:
+                print(f"✓ Has 'depth' dimension")
+            
+            if var in ds:
+                data = ds[var]
                 cache[key] = data
                 return data
+            else:
+                print(f"Warning: Variable {var} not found in standardized dataset")
+                print(f"Available variables: {list(ds.variables.keys())}")
+
 
     if not allow_resampling:
         raise ValueError(f"Cannot get {var} at {granularity}")
@@ -174,6 +196,7 @@ def get_data_optimised_with_cache(
 
     if best_source_gran:
         source_file = valid_entries[best_source_gran][0]
+
 
         # TRY DISK CACHE FIRST
         cached_resampled = load_resampled_from_cache(

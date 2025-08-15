@@ -1,15 +1,13 @@
 import os
-from pathlib import Path
 import pandas as pd
 import xarray as xr
 
 from standardise_variables import VARIABLE_ALIASES, standardize_variables
 from gran_analysis import (
-    analyze_what_is_possible_efficient,
+    analyze_metric_requirements,
 )
 
 GRANULARITY_ORDER = ["10d", "1m", "3m", "1y"]
-
 
 def find_time_dimension(data):
     """
@@ -122,6 +120,8 @@ def get_data_optimised_with_cache(
 ):
     """
     Enhanced version with disk caching for resampled data
+
+    This function retrieves data for a specific variable and granularity, utilizing caching mechanisms to optimize performance.
     """
     if cache is None:
         cache = {}
@@ -144,27 +144,23 @@ def get_data_optimised_with_cache(
         if exists:
             print(f"Loading {var}@{granularity} directly from {file_path}")
             ds = xr.open_dataset(file_path)
-            print(f"Before standardization - dimensions: {list(ds.dims.keys())}")
-            print(f"Before standardization - coordinates: {list(ds.coords.keys())}")
+            # print(f"Before standardization - dimensions: {list(ds.dims.keys())}")
+            # print(f"Before standardization - coordinates: {list(ds.coords.keys())}")
             ds = standardize_variables(ds, VARIABLE_ALIASES)
 
-            print(f"After standardization - dimensions: {list(ds.dims.keys())}")
-            print(f"After standardization - coordinates: {list(ds.coords.keys())}")
+            # from time_utils import inspect_time_labels
+            # inspect_time_labels(ds)
+            # print(f"After standardization - dimensions: {list(ds.dims.keys())}")
+            # print(f"After standardization - coordinates: {list(ds.coords.keys())}")
 
             # check if the extracted variable is standardised correctly:
             print(f"var: {var}")
             data_check = ds[var]
-            print(f"DataArray type: {type(data_check)}")
-            print(f"DataArray dimensions: {list(data_check.dims)}")  # No .keys() here
-            print(f"DataArray coordinates: {list(data_check.coords.keys())}")  # .keys() is OK here
-            print(f"DataArray shape: {data_check.shape}")
+            # print(f"DataArray type: {type(data_check)}")
+            # print(f"DataArray dimensions: {list(data_check.dims)}")  # No .keys() here
+            # print(f"DataArray coordinates: {list(data_check.coords.keys())}")  # .keys() is OK here
+            # print(f"DataArray shape: {data_check.shape}")
 
-            # Check specific coordinates
-            if 'depth' in data_check.coords:
-                print(f"✓ Has 'depth' coordinate")
-            else:
-                print(f"✗ Missing 'depth' coordinate")
-                
             if 'nav_lev' in data_check.dims:
                 print(f"✗ Still has 'nav_lev' dimension")
             elif 'depth' in data_check.dims:
@@ -276,6 +272,11 @@ def get_data_optimised(
     )
 
 
+# I want a few things:
+# - simple - provide a granularity and get all resamplings
+# - get the maximum granularity at which all metrics can be computed
+# - intelligently compute all granularities up to the previous minimum 
+
 def run_metric_with_cache(
     metric_name,
     metric_function,
@@ -320,7 +321,8 @@ def run_all_metrics_with_cache(
     save_to_cache=True,
 ):
     """
-    Enhanced run_all_metrics with disk caching for resampled data
+    Enhanced run_all_metrics with disk caching for resampled data.
+
     """
     if granularities is None:
         granularities = GRANULARITY_ORDER
@@ -420,7 +422,7 @@ def run_metrics_intelligently_with_cache(
     print("=== INTELLIGENT METRIC COMPUTATION WITH DISK CACHING ===")
     print(f"Save to cache: {save_to_cache}")
 
-    analysis = analyze_what_is_possible_efficient(
+    analysis = analyze_metric_requirements(
         variable_file_map, metric_requirements
     )
 
@@ -513,6 +515,173 @@ def compute_results_parallel_fixed(results, n_workers=1):
             print(f"✓ {key} already computed")
 
     return results
+
+def load_all_variables_at_granularity(gran, variable_file_map, analysis, cache, disk_cache_dir, save_to_cache):
+    """
+    Loads all variables available at a given granularity (direct or resampled).
+    Returns a dict: {var: xarray.DataArray}
+    """
+    available_vars = [var for var, grans in analysis['variable_availability'].items() if gran in grans]
+    loaded_vars = {}
+    for var in available_vars:
+        try:
+            data = get_data_optimised_with_cache(
+                var, gran, variable_file_map, cache,
+                allow_resampling=True,
+                disk_cache_dir=disk_cache_dir,
+                save_to_cache=save_to_cache,
+            )
+            loaded_vars[var] = data
+        except Exception as e:
+            print(f"✗ Failed to load {var}@{gran}: {e}")
+    return loaded_vars
+
+
+def overwrite_time_coordinate(data, ref_data):
+    """
+    Overwrite the time coordinate of `data` with that of `ref_data`.
+    """
+    time_dim = find_time_dimension(data)
+    ref_time_dim = find_time_dimension(ref_data)
+    if time_dim and ref_time_dim:
+        # Only overwrite if lengths match
+        if data.sizes[time_dim] == ref_data.sizes[ref_time_dim]:
+            return data.assign_coords({time_dim: ref_data[ref_time_dim].values})
+        else:
+            print(f"✗ Cannot overwrite time: length mismatch ({data.sizes[time_dim]} vs {ref_data.sizes[ref_time_dim]})")
+    return data
+
+def align_variables_by_overwriting_time(loaded_vars, ref_var):
+    """
+    Overwrites the time coordinate of all variables in loaded_vars with that of ref_var.
+    """
+    ref_data = loaded_vars[ref_var]
+    aligned_vars = {}
+    for var, data in loaded_vars.items():
+        print(data.time.values)
+        print(ref_data.time.values)
+        aligned_vars[var] = overwrite_time_coordinate(data, ref_data)
+    return aligned_vars
+
+def resample_to_reference_bins(
+    data, ref_time, calendar, units, time_dim="time_counter", fallback_freq=None
+):
+    """
+    Resample data to bins defined by ref_time (using cftime logic).
+    If this fails, fall back to xarray's .resample() with fallback_freq.
+    """
+    import cftime
+    import numpy as np
+    import xarray as xr
+
+    try:
+        numeric = cftime.date2num(ref_time, units, calendar)
+        if len(numeric) < 2:
+            raise ValueError("Reference time axis too short for binning.")
+
+        midpoints = (numeric[:-1] + numeric[1:]) / 2
+        first_edge = numeric[0] - (midpoints[0] - numeric[0])
+        last_edge = numeric[-1] + (numeric[-1] - midpoints[-1])
+        bin_edges_numeric = np.concatenate([[first_edge], midpoints, [last_edge]])
+        bin_edges = cftime.num2date(bin_edges_numeric, units, calendar)
+
+        resampled = data.groupby_bins(
+            time_dim, bin_edges, labels=ref_time, right=False
+        ).mean()
+        resampled = resampled.rename({f"{time_dim}_bins": time_dim})
+        resampled = resampled.assign_coords({time_dim: ref_time})
+        return resampled
+
+    except Exception as e:
+        print(f"[resample_to_reference_bins] Binning failed: {e}")
+        if fallback_freq is not None:
+            print(f"[resample_to_reference_bins] Falling back to .resample({fallback_freq})")
+            resampled = data.resample({time_dim: fallback_freq}).mean()
+            return resampled
+        else:
+            raise RuntimeError(
+                "Resampling to reference bins failed and no fallback_freq provided."
+            )
+
+def align_all_variables_to_reference_bins(loaded_vars, ref_var, calendar, units, time_dim="time_counter", fallback_freq=None):
+    """
+    For each variable in loaded_vars, resample or align to the bins defined by ref_var's time axis.
+    """
+    ref_data = loaded_vars[ref_var]
+    ref_time = ref_data[time_dim].values
+    aligned_vars = {}
+    for var, data in loaded_vars.items():
+        if data.sizes[time_dim] == len(ref_time):
+            # Already matches, just overwrite coordinate
+            aligned_vars[var] = data.assign_coords({time_dim: ref_time})
+        else:
+            # Resample to reference bins
+            aligned_vars[var] = resample_to_reference_bins(
+                data, ref_time, calendar, units, time_dim, fallback_freq
+            )
+    return aligned_vars
+
+def preload_and_align_all_variables(
+    variable_file_map, granularities, analysis,
+    disk_cache_dir="./resampled_cache", save_to_cache=True
+):
+    cache = {}
+    aligned_vars_by_gran = {}
+
+    for gran in granularities:
+        print(f"\n=== GRANULARITY: {gran} ===")
+        loaded_vars = load_all_variables_at_granularity(
+            gran, variable_file_map, analysis, cache, disk_cache_dir, save_to_cache
+        )
+
+        direct_vars = analysis["direct_from_file_by_granularity"].get(gran, [])
+        ref_var = next((var for var in direct_vars if var in loaded_vars), None)
+        if ref_var is None:
+            print(f"No reference variable for {gran}")
+            aligned_vars_by_gran[gran] = loaded_vars
+            continue
+        print(f"Using '{ref_var}' as reference for alignment at {gran}")
+
+        # Get calendar and units from the reference variable's time coordinate
+        ref_data = loaded_vars[ref_var]
+        time_dim = find_time_dimension(ref_data)
+        calendar = ref_data[time_dim].attrs.get("calendar", "360_day")
+        units = ref_data[time_dim].attrs.get("units", "days since 0001-01-01")
+
+        # Align all variables to the reference bins
+        aligned_vars = align_all_variables_to_reference_bins(
+            loaded_vars, ref_var, calendar, units, time_dim=time_dim, fallback_freq=gran
+        )
+
+        for var, data in aligned_vars.items():
+            cache[(var, gran)] = data
+
+    return cache
+
+# def preload_and_align_all_variables(
+#     variable_file_map, granularities, analysis,
+#     disk_cache_dir="./resampled_cache", save_to_cache=True
+# ):
+#     cache = {}
+#     aligned_vars_by_gran = {}
+
+#     for gran in granularities:
+#         print(f"\n=== GRANULARITY: {gran} ===")
+#         loaded_vars = load_all_variables_at_granularity(
+#             gran, variable_file_map, analysis, cache, disk_cache_dir, save_to_cache
+#         )
+
+#         direct_vars = analysis["direct_from_file_by_granularity"].get(gran, [])
+#         ref_var = next((var for var in direct_vars if var in loaded_vars), None)
+#         if ref_var is None:
+#             print(f"No reference variable for {gran}")
+#             aligned_vars_by_gran[gran] = loaded_vars
+#             continue
+#         print(f"Using '{ref_var}' as reference for alignment at {gran}")
+#         aligned_vars = align_variables_by_overwriting_time(loaded_vars, ref_var)
+#         aligned_vars_by_gran[gran] = aligned_vars
+
+#     return cache, aligned_vars_by_gran
 
 
 # 1. we can get the maximum granularity and run_all_metrics_with_cache

@@ -11,8 +11,10 @@ Functions:
 - get_optimal_granularities_for_metrics: Find finest granularity for each metric
 - show_availability_summary: Comprehensive availability report
 - get_maximum_granularity_with_all: Find granularity where most metrics can run
-- analyze_what_is_possible_efficient: Wrapper for backward compatibility
 """
+
+
+
 
 import os
 
@@ -22,8 +24,11 @@ GRANULARITY_ORDER = ["10d", "1m", "3m", "1y"]
 def get_available_granularities(variable_file_map):
     """Get all available granularities from the file map"""
     all_grans = set()
-    for entries in variable_file_map.values():
+    for name, entries in variable_file_map.items():
         for entry in entries:
+            # breakpoint()
+            if name == "mesh_mask":
+                continue
             all_grans.add(entry["granularity"])
     return sorted(all_grans, key=GRANULARITY_ORDER.index)
 
@@ -130,6 +135,23 @@ def analyze_metric_requirements(variable_file_map, metric_requirements):
 
     # Add metrics analysis to the result
     analysis["runnable_metrics"] = runnable_metrics
+
+    # Build a mapping: granularity -> list of variables available at that granularity
+    granularity_to_variables = {gran: [] for gran in analysis["available_granularities"]}
+    for var, grans in analysis["variable_availability"].items():
+        for gran in grans:
+            granularity_to_variables[gran].append(var)
+
+    analysis["granularity_to_variables"] = granularity_to_variables
+
+    # invert the direct files so we index by granularity and return the available variables
+    direct_from_file_by_granularity = {gran: [] for gran in analysis["available_granularities"]}
+    for var, direct_grans in analysis["direct_files"].items():
+        for gran in direct_grans:
+            direct_from_file_by_granularity[gran].append(var)
+
+    analysis["direct_from_file_by_granularity"] = direct_from_file_by_granularity
+
     return analysis
 
 
@@ -150,7 +172,7 @@ def get_runnable_metrics_at_granularity(
     analysis = analyze_metric_requirements(variable_file_map, metric_requirements)
     return analysis["runnable_metrics"].get(target_granularity, [])
 
-
+# Find the maximum granularity where each metric can be computed
 def get_optimal_granularities_for_metrics(variable_file_map, metric_requirements):
     """
     Get the finest granularity where each metric can run
@@ -174,7 +196,7 @@ def get_optimal_granularities_for_metrics(variable_file_map, metric_requirements
 
     return optimal_grans
 
-
+# Find the maximum granularity where all metrics can be computed
 def get_maximum_granularity_with_all(
     variable_file_map, metric_requirements, GRANULARITY_ORDER=None
 ):
@@ -250,17 +272,3 @@ def show_availability_summary(variable_file_map, metric_requirements):
 
     return analysis
 
-
-# Backward compatibility wrapper
-def analyze_what_is_possible_efficient(variable_file_map, metric_requirements):
-    """
-    Backward compatibility wrapper around analyze_metric_requirements
-
-    Args:
-        variable_file_map: Dictionary mapping variables to file entries
-        metric_requirements: Dictionary mapping metric names to required variables
-
-    Returns:
-        Full analysis dictionary (same as analyze_metric_requirements)
-    """
-    return analyze_metric_requirements(variable_file_map, metric_requirements)

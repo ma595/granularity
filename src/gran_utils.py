@@ -181,18 +181,16 @@ def get_data_optimised_with_cache(
     # Find best resampling source
     available_grans = [gran for gran, (_, exists) in valid_entries.items() if exists]
     target_rank = GRANULARITY_ORDER.index(granularity)
-    best_source_gran = next(
-        (
-            GRANULARITY_ORDER[rank]
-            for rank in reversed(range(target_rank))
-            if GRANULARITY_ORDER[rank] in available_grans
-        ),
-        None,
-    )
+
+    finer_grans = [
+        GRANULARITY_ORDER[rank]
+        for rank in range(target_rank - 1, -1, -1)
+        if GRANULARITY_ORDER[rank] in available_grans
+    ]
+    best_source_gran = finer_grans[0] if finer_grans else None
 
     if best_source_gran:
         source_file = valid_entries[best_source_gran][0]
-
 
         # TRY DISK CACHE FIRST
         cached_resampled = load_resampled_from_cache(
@@ -623,7 +621,7 @@ def align_all_variables_to_reference_bins(loaded_vars, ref_var, calendar, units,
 
 def preload_and_align_all_variables(
     variable_file_map, granularities, analysis,
-    disk_cache_dir="./resampled_cache", save_to_cache=True
+    disk_cache_dir="./resampled_cache", save_to_cache=False
 ):
     cache = {}
     aligned_vars_by_gran = {}
@@ -657,32 +655,3 @@ def preload_and_align_all_variables(
             cache[(var, gran)] = data
 
     return cache
-
-# def preload_and_align_all_variables(
-#     variable_file_map, granularities, analysis,
-#     disk_cache_dir="./resampled_cache", save_to_cache=True
-# ):
-#     cache = {}
-#     aligned_vars_by_gran = {}
-
-#     for gran in granularities:
-#         print(f"\n=== GRANULARITY: {gran} ===")
-#         loaded_vars = load_all_variables_at_granularity(
-#             gran, variable_file_map, analysis, cache, disk_cache_dir, save_to_cache
-#         )
-
-#         direct_vars = analysis["direct_from_file_by_granularity"].get(gran, [])
-#         ref_var = next((var for var in direct_vars if var in loaded_vars), None)
-#         if ref_var is None:
-#             print(f"No reference variable for {gran}")
-#             aligned_vars_by_gran[gran] = loaded_vars
-#             continue
-#         print(f"Using '{ref_var}' as reference for alignment at {gran}")
-#         aligned_vars = align_variables_by_overwriting_time(loaded_vars, ref_var)
-#         aligned_vars_by_gran[gran] = aligned_vars
-
-#     return cache, aligned_vars_by_gran
-
-
-# 1. we can get the maximum granularity and run_all_metrics_with_cache
-# 2. run_metrics_intelligently_with_cache

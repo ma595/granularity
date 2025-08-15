@@ -11,7 +11,7 @@ from gran_utils import (
 
 from gran_analysis import analyze_metric_requirements, show_availability_summary, get_maximum_granularity_with_all
 
-from metric_real import (
+from metrics_real import (
     ACC_Drake_metric,
     NASTG_BSF_max,
     check_density,
@@ -82,6 +82,8 @@ def main():
 
     runnable_functions_gran = analysis["runnable_metrics"]
 
+    results_by_granularity = {}
+
     for gran, func_list in runnable_functions_gran.items():
         print(f"\n=== Running metrics at granularity: {gran} ===")
         for func_name in func_list:
@@ -93,16 +95,22 @@ def main():
                 inputs = [cache[(var, gran)] for var in required_vars]
                 # Call the metric function with the inputs
                 result = metric_functions[func_name](*inputs)
-                print(f"Result for {func_name}: {result}")
+                # print(f"Result for {func_name}: {result}")
+                if gran not in results_by_granularity:
+                    results_by_granularity[gran] = {}
+                results_by_granularity[gran][func_name] = result
             else:
                 print(f"Metric function '{func_name}' not found in metric_functions dictionary.")
 
+    # now write results to file
     # print(analysis)
-
     # print(show_availability_summary(variable_file_map, metric_requirements))
-
     # print(get_maximum_granularity_with_all(variable_file_map, metric_requirements))
 
+    from metrics_io import write_metrics_to_csv
+
+    for gran in results_by_granularity:
+        write_metrics_to_csv(results_by_granularity[gran], f"outputs/metrics_{gran}.csv")
 
     # options:
     ## We can get the maximum granularity where the all exist - this gives us a month

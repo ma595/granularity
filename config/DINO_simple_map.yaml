@@ -1,0 +1,17 @@
+# it might be better to organise this by granularity i.e 
+# Must be temperature, salinity, ssh, perhaps 'all'. 
+# variable_file_map {file: "", granularity: "", variables : { ] } 
+
+variable_file_map:
+  temperature:
+    - {file: "data-simple/50/DINO_1y_grid_T.nc", granularity: "1y"}
+  salinity:
+    - {file: "data-simple/50/DINO_1y_grid_T.nc", granularity: "1y"}
+  velocity_u:
+    - {file: "data-simple/50/DINO_1y_grid_U.nc", granularity: "1y"}
+  velocity_v:
+    - {file: "data-simple/50/DINO_1y_grid_V.nc", granularity: "1y"}
+  ssh:
+    - {file: "data-simple/50/DINO_1m_grid_T.nc", granularity: "1m"}
+  mesh_mask:
+    - {file: "data-simple/50/mesh_mask.nc"}

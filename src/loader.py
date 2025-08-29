@@ -10,8 +10,6 @@ import xarray as xr
 from typing import Dict
 
 
-
-
 def load_output_files(setup: dict, path: str) -> dict[str, xr.Dataset]:
     """Load output files based on the setup configuration."""
     output_data = {}

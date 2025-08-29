@@ -45,8 +45,8 @@ VARIABLE_ALIASES = {
     "velocity_u": ["un", "u", "uoce", "uoce_inst", "zonal_velocity"],
     "velocity_v": ["vn", "v", "voce", "voce_inst", "meridional_velocity"],
     "depth": ["depth", "nav_lev", "deptht", "depthu", "depthv"],
-    "nav_lat": ["nav_lat", "y", "latitude"],    # Standardize TO nav_lat
-    "nav_lon": ["nav_lon", "x", "longitude"],   # Standardize TO nav_lon
+    "nav_lat": ["nav_lat", "y", "latitude"],  # Standardize TO nav_lat
+    "nav_lon": ["nav_lon", "x", "longitude"],  # Standardize TO nav_lon
     "ssh": ["sshn", "ssh"],
     "time": ["time_counter", "time"],
     "salinity": ["so", "sn", "soce", "soce_inst", "salinity"],
@@ -72,14 +72,15 @@ def standardize_variables(dataset, variable_dict):
     """
     rename_map = {}
 
-
     for standard_name, aliases in variable_dict.items():
         # Skip if standard name already exists
-        if (standard_name in dataset.variables or 
-            standard_name in dataset.coords or 
-            standard_name in dataset.dims):
+        if (
+            standard_name in dataset.variables
+            or standard_name in dataset.coords
+            or standard_name in dataset.dims
+        ):
             continue
-            
+
         for alias in aliases:
             if alias in dataset.variables:
                 rename_map[alias] = standard_name
@@ -92,7 +93,7 @@ def standardize_variables(dataset, variable_dict):
                 break
 
     print(f"DEBUG: Rename map = {rename_map}")  # Add this to see what's happening
-    
+
     if rename_map:
         dataset = dataset.rename(rename_map)
 

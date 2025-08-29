@@ -13,9 +13,6 @@ Functions:
 - get_maximum_granularity_with_all: Find granularity where most metrics can run
 """
 
-
-
-
 import os
 
 GRANULARITY_ORDER = ["10d", "1m", "3m", "1y"]
@@ -137,7 +134,9 @@ def analyze_metric_requirements(variable_file_map, metric_requirements):
     analysis["runnable_metrics"] = runnable_metrics
 
     # Build a mapping: granularity -> list of variables available at that granularity
-    granularity_to_variables = {gran: [] for gran in analysis["available_granularities"]}
+    granularity_to_variables = {
+        gran: [] for gran in analysis["available_granularities"]
+    }
     for var, grans in analysis["variable_availability"].items():
         for gran in grans:
             granularity_to_variables[gran].append(var)
@@ -145,7 +144,9 @@ def analyze_metric_requirements(variable_file_map, metric_requirements):
     analysis["granularity_to_variables"] = granularity_to_variables
 
     # invert the direct files so we index by granularity and return the available variables
-    direct_from_file_by_granularity = {gran: [] for gran in analysis["available_granularities"]}
+    direct_from_file_by_granularity = {
+        gran: [] for gran in analysis["available_granularities"]
+    }
     for var, direct_grans in analysis["direct_files"].items():
         for gran in direct_grans:
             direct_from_file_by_granularity[gran].append(var)
@@ -172,6 +173,7 @@ def get_runnable_metrics_at_granularity(
     analysis = analyze_metric_requirements(variable_file_map, metric_requirements)
     return analysis["runnable_metrics"].get(target_granularity, [])
 
+
 # Find the maximum granularity where each metric can be computed
 def get_optimal_granularities_for_metrics(variable_file_map, metric_requirements):
     """
@@ -195,6 +197,7 @@ def get_optimal_granularities_for_metrics(variable_file_map, metric_requirements
                 break
 
     return optimal_grans
+
 
 # Find the maximum granularity where all metrics can be computed
 def get_maximum_granularity_with_all(
@@ -271,4 +274,3 @@ def show_availability_summary(variable_file_map, metric_requirements):
         print(f"  {metric}: {gran}")
 
     return analysis
-

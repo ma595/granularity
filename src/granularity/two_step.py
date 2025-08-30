@@ -1,13 +1,13 @@
-# --- ADD THIS: Two-step materialization ---
 from pathlib import Path
 import glob
 import os
 import xarray as xr
 
-from src.granularity.fix_timing import ensure_time, same_time_axis
-from src.granularity.cache import get_cache_filename, write_metadata
+from granularity.fix_timing import ensure_time, same_time_axis
+from granularity.cache import get_cache_filename, write_metadata
 
-from src.granularity.gran_utils import get_data, align_all_to_reference
+from granularity.gran_utils import get_data, align_all_to_reference
+
 
 def open_materialized(var, target_gran, disk_cache_dir="./resampled_cache"):
     """
@@ -15,21 +15,29 @@ def open_materialized(var, target_gran, disk_cache_dir="./resampled_cache"):
     Raises if not found.
     """
     import glob
+
     pattern = os.path.join(disk_cache_dir, f"{var}_*_to_{target_gran}.nc")
     hits = sorted(glob.glob(pattern))
     if not hits:
-        raise FileNotFoundError(f"No materialized cache for {var}@{target_gran} in {disk_cache_dir}")
+        raise FileNotFoundError(
+            f"No materialized cache for {var}@{target_gran} in {disk_cache_dir}"
+        )
     # Use the newest if multiple
     path = hits[-1]
     da = xr.open_dataarray(path, chunks={"time": 100})
     return da
+
 
 def materialize_resamples_aligned(
     variable_file_map: dict,
     analysis: dict,
     gran: str,
     disk_cache_dir: str = "./resampled_cache",
-    prefer_ref_vars: tuple[str, ...] = ("tn", "sshn", "thetao"),  # tweak to your favorites
+    prefer_ref_vars: tuple[str, ...] = (
+        "tn",
+        "sshn",
+        "thetao",
+    ),  # tweak to your favorites
 ):
     """
     Materialize *aligned* artifacts for all variables available at `gran`.
@@ -63,14 +71,16 @@ def materialize_resamples_aligned(
                 analysis=analysis,
                 allow_resampling=True,
                 disk_cache_dir=disk_cache_dir,
-                save_to_cache=False,   # <-- IMPORTANT: don't write yet
+                save_to_cache=False,  # <-- IMPORTANT: don't write yet
             )
             loaded[v] = da
         except Exception as e:
             print(f"[align materialize] skip {v}@{gran}: {e}")
 
     if ref_var not in loaded:
-        print(f"[align materialize] Reference '{ref_var}' failed to load; aborting for {gran}")
+        print(
+            f"[align materialize] Reference '{ref_var}' failed to load; aborting for {gran}"
+        )
         return []
 
     # Align everyone to the reference axis (uses your resample_to_reference_bins under the hood)
@@ -80,7 +90,7 @@ def materialize_resamples_aligned(
     written = []
     ref = ensure_time(aligned[ref_var])
     ref_time = ref["time"].values
-    cal  = ref["time"].attrs.get("calendar", "360_day")
+    cal = ref["time"].attrs.get("calendar", "360_day")
     units = ref["time"].attrs.get("units", "days since 0001-01-01")
 
     for v, da in aligned.items():
@@ -113,7 +123,7 @@ def materialize_resamples_aligned(
 def materialize_resamples(
     variable_file_map,
     analysis,
-    targets=("10d","1m","3m","1y"),
+    targets=("10d", "1m", "3m", "1y"),
     variables=None,
     disk_cache_dir="./resampled_cache",
 ):
@@ -135,7 +145,11 @@ def materialize_resamples(
 
     for var in variables:
         # What direct granularities exist for this var?
-        direct_grans = [e["granularity"] for e in variable_file_map.get(var, []) if os.path.exists(e["file"])]
+        direct_grans = [
+            e["granularity"]
+            for e in variable_file_map.get(var, [])
+            if os.path.exists(e["file"])
+        ]
         if not direct_grans:
             print(f"[materialize] Skip {var}: no direct source files")
             continue
@@ -158,14 +172,16 @@ def materialize_resamples(
                 hits = sorted(glob.glob(pattern))
                 created_or_existing.extend(hits)
                 if hits:
-                    print(f"[materialize] {var}@{tgt}: ready ({os.path.basename(hits[-1])})")
+                    print(
+                        f"[materialize] {var}@{tgt}: ready ({os.path.basename(hits[-1])})"
+                    )
             except Exception as e:
                 print(f"[materialize] {var}@{tgt}: not materialized ({e})")
 
     return created_or_existing
 
 
-# --- ADD THIS: Metrics step consuming only materialized data ---
+# 2
 def run_metrics_from_materialized(
     metric_requirements,
     metric_functions,
@@ -184,7 +200,9 @@ def run_metrics_from_materialized(
 
         try:
             # Load all inputs from materialized artifacts
-            inputs = [open_materialized(v, target_gran, disk_cache_dir) for v in required_vars]
+            inputs = [
+                open_materialized(v, target_gran, disk_cache_dir) for v in required_vars
+            ]
 
             # Align on time (inner join) before computing
             aligned = xr.align(*inputs, join="inner")
@@ -202,30 +220,26 @@ def run_metrics_from_materialized(
     return results
 
 
-def two_step_resample_all(
+# USED
+def two_step_resample_all_aligned(
     variable_file_map,
-    analysis,  # from analyze_metric_requirements(...)
+    analysis,
     targets=None,
     disk_cache_dir="./resampled_cache",
 ):
-    """
-    Materialize for all variables that appear at each target granularity
-    (direct or resampled per your analysis).
-    """
     if targets is None:
         targets = analysis["available_granularities"]
-
     for gran in targets:
-        vars_at_gran = analysis["granularity_to_variables"].get(gran, [])
-        print(f"\n[Two-step] Materializing {len(vars_at_gran)} vars at {gran} …")
-        materialize_resamples(
+        print(f"\n[Two-step aligned] Materializing aligned artifacts at {gran}")
+        materialize_resamples_aligned(
             variable_file_map=variable_file_map,
             analysis=analysis,
-            targets=(gran,),
-            variables=vars_at_gran,
+            gran=gran,
             disk_cache_dir=disk_cache_dir,
         )
 
+
+# 1
 def two_step_metrics_all(
     metric_requirements,
     metric_functions,
@@ -245,22 +259,16 @@ def two_step_metrics_all(
             disk_cache_dir=disk_cache_dir,
         )
         all_results.update(res)
-    return all_results
 
+    # We currently get data in this shape
+    # ('10d', 'check_density') -> {result, granularity, variables_used}
+    # we want
+    # ['10d'] -> { 'check_density': result, 'temperature_500m_30NS_metric : result, ...}
 
-def two_step_resample_all_aligned(
-    variable_file_map,
-    analysis,
-    targets=None,
-    disk_cache_dir="./resampled_cache",
-):
-    if targets is None:
-        targets = analysis["available_granularities"]
-    for gran in targets:
-        print(f"\n[Two-step aligned] Materializing aligned artifacts at {gran}")
-        materialize_resamples_aligned(
-            variable_file_map=variable_file_map,
-            analysis=analysis,
-            gran=gran,
-            disk_cache_dir=disk_cache_dir,
-        )
+    results_by_granularity = {}
+    for (gran, func), result_meta in all_results.items():
+        if gran not in results_by_granularity:
+            results_by_granularity[gran] = {}
+        results_by_granularity[gran][func] = result_meta["result"]
+
+    return results_by_granularity

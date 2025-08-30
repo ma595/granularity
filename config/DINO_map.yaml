@@ -4,18 +4,18 @@
 
 variable_file_map:
   temperature:
-    - {file: "restart3/DINO_10d_grid_inst_T_3D.nc", granularity: "10d"}
-    - {file: "restart3/DINO_3m_grid_T_3D.nc", granularity: "3m"}
+    - {file: "restart3/DINO_10d_grid_inst_T_3D.nc", granularity: "10d", name: "toce_inst"}
+    - {file: "restart3/DINO_3m_grid_T_3D.nc", granularity: "3m", name: "toce_inst"}
   salinity:
-    - {file: "restart3/DINO_10d_grid_inst_T_3D.nc", granularity: "10d"}
-    - {file: "restart3/DINO_3m_grid_T_3D.nc", granularity: "3m"}
+    - {file: "restart3/DINO_10d_grid_inst_T_3D.nc", granularity: "10d", name: "soce_inst"}
+    - {file: "restart3/DINO_3m_grid_T_3D.nc", granularity: "3m", name: "soce_inst"}
   velocity_u:
-    - {file: "restart3/DINO_10d_grid_inst_U_3D.nc", granularity: "10d"}
-    - {file: "restart3/DINO_3m_grid_U_3D.nc", granularity: "3m"}
+    - {file: "restart3/DINO_10d_grid_inst_U_3D.nc", granularity: "10d", name: "uoce_inst"}
+    - {file: "restart3/DINO_3m_grid_U_3D.nc", granularity: "3m", name: "uoce_inst"}
   velocity_v:
-    - {file: "restart3/DINO_10d_grid_inst_V_3D.nc", granularity: "10d"}
-    - {file: "restart3/DINO_3m_grid_V_3D.nc", granularity: "3m"}
+    - {file: "restart3/DINO_10d_grid_inst_V_3D.nc", granularity: "10d", name: "voce_inst"}
+    - {file: "restart3/DINO_3m_grid_V_3D.nc", granularity: "3m", name: "voce_inst"}
   ssh:
-    - {file: "restart3/DINO_1m_grid_T_2D.nc", granularity: "1m"}
+    - {file: "restart3/DINO_1m_grid_T_2D.nc", granularity: "1m", name: "ssh"}
   mesh_mask:
     - {file: "restart3/mesh_mask.nc"}

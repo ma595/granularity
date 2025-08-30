@@ -51,11 +51,37 @@ def select_gran(results, gran):
     """View: all metrics at one granularity (stays flat)."""
     return {metric: v for (g, metric), v in results.items() if g == gran}
 
+def run_lean(variable_file_map, metric_requirements, metric_functions):
+
+    from granularity.gran_lean import preload_aligned_per_gran_lean, run_metrics_on_preloaded_dict
+
+    ds_by_gran = preload_aligned_per_gran_lean(
+        variable_file_map, metric_requirements,
+        targets=["1m","3m"],             # or analysis["available_granularities"]
+        allow_resampling=True,
+        allow_chained_resample=False,     # reuse cached monthly when building yearly, if present
+        cache_dir="./resampled_cache",   # where var_*_to_{gran}.nc live
+    )
+
+    results_by_granularity = run_metrics_on_preloaded_dict(
+        ds_by_gran, metric_requirements, metric_functions
+    )
+
+    print(results_by_granularity)
+
+    for gran in results_by_granularity:
+        print(gran)
+        write_metrics_to_csv(
+            results_by_granularity[gran], f"outputs/metrics_{gran}_3.csv"
+        )
+
 
 def two_step(analysis, variable_file_map, metric_requirements, metric_functions):
     # A) Analyze what’s possible (you already do this)
     analysis = analyze_metric_requirements(variable_file_map, metric_requirements)
 
+    # at this point we have flexibility about what we 
+    # can do in terms of running all metrics. 
     targets = ["10d", "1m", "3m"]
     # B) STEP 1 — materialize (pick granularities you care about)
     # two_step_resample_all_aligned(
@@ -75,18 +101,18 @@ def two_step(analysis, variable_file_map, metric_requirements, metric_functions)
 
     for gran in results_by_granularity:
         write_metrics_to_csv(
-            results_by_granularity[gran], f"outputs/metrics_{gran}.csv"
+            results_by_granularity[gran], f"outputs/metrics_{gran}_2S.csv"
         )
 
     # (Optional) compute lazy results now
     # results = compute_results_parallel_fixed(results)
 
 
-def run_on_the_fly(analysis, variable_file_map, metric_requirements, metric_functions):
+def run_on_the_fly(analysis, variable_file_map, metric_requirements, metric_functions, save_to_cache=False, persist_aligned=False):
     grans = analysis["available_granularities"]
 
     cache = preload_and_align_all_variables(
-        variable_file_map, grans, analysis, save_to_cache=False
+        variable_file_map, grans, analysis, save_to_cache=save_to_cache, persist_aligned=persist_aligned
     )
 
     # print(cache.keys())
@@ -175,9 +201,11 @@ def main():
 
     analysis = analyze_metric_requirements(variable_file_map, metric_requirements)
 
-    # run_on_the_fly(analysis, variable_file_map, metric_requirements, metric_functions)
+    run_on_the_fly(analysis, variable_file_map, metric_requirements, metric_functions, save_to_cache=False, persist_aligned=False)
 
-    two_step(analysis, variable_file_map, metric_requirements, metric_functions)
+    # two_step(analysis, variable_file_map, metric_requirements, metric_functions)
+
+    # run_lean(variable_file_map, metric_requirements, metric_functions)
 
     # options:
     ## We can get the maximum granularity where the all exist - this gives us a month

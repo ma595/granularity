@@ -5,10 +5,9 @@ import xarray as xr
 
 from granularity.fix_timing import ensure_time, same_time_axis
 from granularity.cache import get_cache_filename, write_metadata
-
 from granularity.gran_utils import get_data, align_all_to_reference
 
-
+# USED (2): Step 2 of 2. Called by run_metrics_from_materialized
 def open_materialized(var, target_gran, disk_cache_dir="./resampled_cache"):
     """
     Open a previously materialized artifact var_*_to_{target_gran}.nc.
@@ -27,7 +26,7 @@ def open_materialized(var, target_gran, disk_cache_dir="./resampled_cache"):
     da = xr.open_dataarray(path, chunks={"time": 100})
     return da
 
-
+# USED (2): Step 1 of 2. Called by two_step_resample_all_aligned
 def materialize_resamples_aligned(
     variable_file_map: dict,
     analysis: dict,
@@ -119,7 +118,7 @@ def materialize_resamples_aligned(
 
     return written
 
-
+# NOT USED 
 def materialize_resamples(
     variable_file_map,
     analysis,
@@ -181,7 +180,7 @@ def materialize_resamples(
     return created_or_existing
 
 
-# 2
+# USED (2) : Step 2 of 2. Called by two_step_metrics_all
 def run_metrics_from_materialized(
     metric_requirements,
     metric_functions,
@@ -220,7 +219,7 @@ def run_metrics_from_materialized(
     return results
 
 
-# USED
+# USED (2): Step 1 of 2.
 def two_step_resample_all_aligned(
     variable_file_map,
     analysis,
@@ -239,7 +238,7 @@ def two_step_resample_all_aligned(
         )
 
 
-# 1
+# USED (2): Step 2 of 2.
 def two_step_metrics_all(
     metric_requirements,
     metric_functions,

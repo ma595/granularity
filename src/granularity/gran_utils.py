@@ -16,13 +16,15 @@ from granularity.gran_analysis import (
     analyze_metric_requirements,
 )
 
+from pathlib import Path
+
 GRANULARITY_ORDER = ["10d", "1m", "3m", "1y"]
 
 
 import hashlib
 import json
 
-
+# USED (1) - called from get_data
 def load_resampled_from_cache(
     var, source_gran, target_gran, source_file, cache_dir="./resampled_cache"
 ):
@@ -52,7 +54,7 @@ def load_resampled_from_cache(
         print(f"Cache load failed: {e}")
         return None
 
-
+# USED (1) - called from get_data
 def save_resampled_to_cache(
     data, var, source_gran, target_gran, source_file, cache_dir="./resampled_cache"
 ):
@@ -88,6 +90,17 @@ def save_resampled_to_cache(
         print(f"Cache save failed: {e}")
 
 
+# USED (1) (mainly) and (2) - need to check how this affects (2)
+def load_aligned_from_cache(var, target_gran, cache_dir="./resampled_cache"):
+    import glob, xarray as xr, os
+    pattern = os.path.join(cache_dir, f"{var}_ALIGNED_to_{target_gran}_*.nc")
+    hits = sorted(glob.glob(pattern))
+    if hits:
+        print(f"Loading {var} ALIGNED→{target_gran} from cache")
+        return xr.open_dataarray(hits[-1], chunks={"time": 100})
+    return None
+
+# USED (1) and (2) public interface
 def get_data(
     var,
     granularity,
@@ -106,6 +119,12 @@ def get_data(
     if key in cache:
         print("MEMORY CACHE HIT", key)
         return cache[key]
+
+    # NEW: aligned artifact takes precedence (skips re-binning later)
+    aligned = load_aligned_from_cache(var, granularity, disk_cache_dir)
+    if aligned is not None:
+        cache[key] = aligned
+        return aligned
 
     # 1. Try direct file first
     if granularity in analysis["direct_files"].get(var, []):
@@ -135,7 +154,9 @@ def get_data(
                 f"No finer granularity available for {var} to resample to {granularity}"
             )
         # Pick the closest (highest index < gran_idx)
-        source_gran = max(finer_grans, key=lambda g: GRANULARITY_ORDER.index(g))
+        # source_gran = max(finer_grans, key=lambda g: GRANULARITY_ORDER.index(g))
+
+        source_gran = min(finer_grans, key=lambda g: GRANULARITY_ORDER.index(g))
         source_file = next(
             e["file"] for e in variable_file_map[var] if e["granularity"] == source_gran
         )
@@ -199,7 +220,7 @@ def get_data(
 
     raise ValueError(f"{var} not available at {granularity} and resampling not allowed")
 
-
+# Maybe USED (1) - called from run_all_metrics_with_cache and run_metrics_intelligently_with_cache
 def run_metric_with_cache(
     metric_name,
     metric_function,
@@ -234,7 +255,7 @@ def run_metric_with_cache(
         print(f"✗ Failed: {metric_name} - {e}")
         return None
 
-
+# UNUSED
 def run_all_metrics_with_cache(
     metric_requirements,
     metric_functions,
@@ -293,6 +314,7 @@ def run_all_metrics_with_cache(
     return results
 
 
+# UNUSED and probably doesn't work - need to align variables at each granularity. 
 def run_metrics_intelligently_with_cache(
     metric_requirements,
     metric_functions,
@@ -342,6 +364,7 @@ def run_metrics_intelligently_with_cache(
 
 
 # Add this function to parallelize result computation
+# UNUSED (we decided to preload first)
 def compute_results_parallel(results, n_workers=1):
     """
     Compute all dask results in parallel
@@ -370,7 +393,7 @@ def compute_results_parallel(results, n_workers=1):
 
     return results
 
-
+# UNUSED 
 def compute_results_parallel_fixed(results, n_workers=1):
     """
     Fixed compute function without dask dependency
@@ -393,6 +416,7 @@ def compute_results_parallel_fixed(results, n_workers=1):
     return results
 
 
+# USED (1) - called from preload_and_align_all_variables
 def load_all_variables_at_granularity(
     gran, variable_file_map, analysis, cache, disk_cache_dir, save_to_cache
 ):
@@ -422,7 +446,7 @@ def load_all_variables_at_granularity(
     return loaded_vars
 
 
-# --- simplified alignment ---
+# USED (1) - called from preload_and_align_all_variables
 def align_all_to_reference(
     loaded_vars: dict[str, xr.DataArray],
     ref_var: str,
@@ -442,32 +466,46 @@ def align_all_to_reference(
             aligned[name] = resample_like(da, ref, fallback_freq=fallback_freq)
     return aligned
 
+# USED (1)
+def _time_hash(da: xr.DataArray) -> str:
+    t = ensure_time(da)["time"].values
+    return hashlib.sha1("".join(map(str, t)).encode()).hexdigest()[:16]
 
-# def align_all_variables_to_reference_bins(loaded_vars, ref_var, calendar, units, time_dim="time_counter", fallback_freq=None):
-#     """
-#     For each variable in loaded_vars, resample or align to the bins defined by ref_var's time axis.
-#     """
-#     ref_data = loaded_vars[ref_var]
-#     ref_time = ref_data[time_dim].values
-#     aligned_vars = {}
-#     for var, data in loaded_vars.items():
-#         if data.sizes[time_dim] == len(ref_time):
-#             # Already matches, just overwrite coordinate
-#             aligned_vars[var] = data.assign_coords({time_dim: ref_time})
-#         else:
-#             # Resample to reference bins
-#             aligned_vars[var] = resample_to_reference_bins(
-#                 data, ref_time, calendar, units, time_dim, fallback_freq
-#             )
-#     return aligned_vars
+# USED (1) 
+def _save_aligned_to_cache(
+    data: xr.DataArray,
+    var: str,
+    target_gran: str,
+    ref_var: str,
+    cache_dir: str = "./resampled_cache",
+) -> str:
+    Path(cache_dir).mkdir(parents=True, exist_ok=True)
+    th = _time_hash(data)
+    fname = f"{var}_ALIGNED_to_{target_gran}_{th}.nc"
+    fpath = os.path.join(cache_dir, fname)
+    ensure_time(data).to_netcdf(fpath)
 
+    meta = {
+        "variable": var,
+        "target_granularity": target_gran,
+        "aligned": True,
+        "reference_variable": ref_var,
+        "time_hash": th,
+        "calendar": ensure_time(data)["time"].attrs.get("calendar"),
+        "units": ensure_time(data)["time"].attrs.get("units"),
+    }
+    with open(fpath.replace(".nc", "_metadata.json"), "w") as f:
+        json.dump(meta, f, indent=2)
+    return fpath
 
+# USED (1) - public interface
 def preload_and_align_all_variables(
     variable_file_map,
     granularities,
     analysis,
     disk_cache_dir="./resampled_cache",
     save_to_cache=False,
+    persist_aligned=False,
 ):
     cache = {}
     aligned_vars_by_gran = {}
@@ -498,6 +536,10 @@ def preload_and_align_all_variables(
         # )
 
         aligned_vars = align_all_to_reference(loaded_vars, ref_var, fallback_freq=gran)
+
+        if persist_aligned:  # new flag you add
+            for var, da in aligned_vars.items():
+                _save_aligned_to_cache(da, var, gran, ref_var, cache_dir=disk_cache_dir)
 
         for var, data in aligned_vars.items():
             cache[(var, gran)] = data

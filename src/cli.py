@@ -1,5 +1,6 @@
 import os
 import dask
+from collections import defaultdict
 import warnings
 import xarray as xr
 
@@ -16,6 +17,12 @@ from granularity.gran_analysis import (
     get_maximum_granularity_with_all,
 )
 
+from granularity.two_step import two_step_resample_all_aligned, two_step_metrics_all
+
+
+from metrics_io import write_metrics_to_csv
+
+
 from metrics_real import (
     ACC_Drake_metric,
     NASTG_BSF_max,
@@ -31,8 +38,48 @@ warnings.filterwarnings(
 
 import yaml
 
-def two_step():
-    pass
+
+def group_by_granularity(results):
+    """{(gran, metric): xr.DataArray} -> {gran: {metric: xr.DataArray}}"""
+    out = defaultdict(dict)
+    for (gran, metric), da in results.items():
+        out[gran][metric] = da
+    return dict(out)
+
+
+def select_gran(results, gran):
+    """View: all metrics at one granularity (stays flat)."""
+    return {metric: v for (g, metric), v in results.items() if g == gran}
+
+
+def two_step(analysis, variable_file_map, metric_requirements, metric_functions):
+    # A) Analyze what’s possible (you already do this)
+    analysis = analyze_metric_requirements(variable_file_map, metric_requirements)
+
+    targets = ["10d", "1m", "3m"]
+    # B) STEP 1 — materialize (pick granularities you care about)
+    # two_step_resample_all_aligned(
+    #     variable_file_map,
+    #     analysis,
+    #     targets=targets,
+    #     disk_cache_dir="./resampled_cache_materialised",
+    # )
+
+    # C) STEP 2 — compute metrics from only the materialized data
+    results_by_granularity = two_step_metrics_all(
+        metric_requirements,
+        metric_functions,
+        targets=targets,
+        disk_cache_dir="./resampled_cache_materialised",
+    )
+
+    for gran in results_by_granularity:
+        write_metrics_to_csv(
+            results_by_granularity[gran], f"outputs/metrics_{gran}.csv"
+        )
+
+    # (Optional) compute lazy results now
+    # results = compute_results_parallel_fixed(results)
 
 
 def run_on_the_fly(analysis, variable_file_map, metric_requirements, metric_functions):
@@ -76,8 +123,6 @@ def run_on_the_fly(analysis, variable_file_map, metric_requirements, metric_func
     # print(analysis)
     # print(show_availability_summary(variable_file_map, metric_requirements))
     # print(get_maximum_granularity_with_all(variable_file_map, metric_requirements))
-
-    from metrics_io import write_metrics_to_csv
 
     for gran in results_by_granularity:
         write_metrics_to_csv(
@@ -130,8 +175,9 @@ def main():
 
     analysis = analyze_metric_requirements(variable_file_map, metric_requirements)
 
-    run_on_the_fly(analysis, variable_file_map, metric_requirements, metric_functions)
+    # run_on_the_fly(analysis, variable_file_map, metric_requirements, metric_functions)
 
+    two_step(analysis, variable_file_map, metric_requirements, metric_functions)
 
     # options:
     ## We can get the maximum granularity where the all exist - this gives us a month
@@ -171,8 +217,6 @@ def main():
     #         print(f"✓ {key} already computed: {result}")
 
     # print(results.keys())
-
-    from metrics_io import write_metrics_to_csv
 
     # # provide a separate file for each granularity and write results to CSV
     # for granularity in results:

@@ -4,7 +4,7 @@ from granularity import (
     get_highest_supported_granularity,
     check_variable_group_available,
     get_minimum_supported_granularity,
-    build_resample_cache_for_all_metrics,
+    build_resample_cache_for_granularity,
     get_runnable_metrics_at_max_frequency,
 )
 
@@ -55,11 +55,46 @@ test_metric_check_density_1m = check_variable_group_available(
     variable_file_map=variable_file_map,
 )
 
-
-# print(resample_cache)
-resample_cache = build_resample_cache_for_all_metrics(
-    metric_requirements, variable_file_map
+resample_cache = build_resample_cache_for_granularity(
+    metric_requirements, variable_file_map, desired_gran="3m"
 )
+
+print(resample_cache)
+# resample_cache = build_resample_cache_for_all_metrics(
+#     metric_requirements, variable_file_map
+# )
+
+# selected_gran = ["1m"]
+# data_cache = {}
+
+# # Add dummy metric functions for testing
+# def dummy_check_density(temperature, salinity):
+#     """Dummy density calculation"""
+#     return temperature * 0.1 + salinity * 0.05
+
+# def dummy_temperature_500m_30NS_metric(temperature):
+#     """Dummy temperature metric"""
+#     return temperature.mean()
+
+# def dummy_ACC_Drake_metric_2(velocity_u, ssh):
+#     """Dummy ACC Drake metric"""
+#     return velocity_u * ssh
+
+# metric_functions = {
+#     "check_density": dummy_check_density,
+#     "temperature_500m_30NS_metric": dummy_temperature_500m_30NS_metric,
+#     "ACC_Drake_metric_2": dummy_ACC_Drake_metric_2,
+# }
+
+# print("Resample cache ", resample_cache)
+
+# run_metrics_over_granularities(
+#     granularity_list=selected_gran,
+#     metric_requirements=metric_requirements,
+#     metric_functions=metric_functions,
+#     data_cache=data_cache,
+#     resample_cache=resample_cache,
+# )
 
 # print(resample_cache)
 # lazy_loader = resample_cache[("SSH", "1y")]
